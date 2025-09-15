@@ -934,12 +934,11 @@ __all__ = [
     "inject_file_generation_type",
 ]
 
-
 def _load_metadata_schema_from_json_bytes(buf: bytes) -> List[Dict[str, Any]]:
     """
-    Accepts the NOVON flat DB JSON as bytes and returns the UI schema
-    (same shape as _load_metadata_schema_from_excel/_google).
-    Chooses a table with required columns; prefers "master_metadata_console".
+    Accepts the NOVON flat DB JSON as bytes and returns the UI schema.
+    Prefers "master_metadata_console" but will fallback to the first table
+    that has the required columns.
     """
     try:
         j = json.loads(buf.decode("utf-8", errors="replace"))
@@ -951,14 +950,12 @@ def _load_metadata_schema_from_json_bytes(buf: bytes) -> List[Dict[str, Any]]:
         raise SystemExit("[FATAL] JSON has no 'tables' dict.")
 
     # Prefer a well-known tab name
-    candidates = []
+    names = list(tables.keys())
     if "master_metadata_console" in tables:
-        candidates = ["master_metadata_console"]
-    else:
-        candidates = list(tables.keys())
+        names = ["master_metadata_console"] + [n for n in names if n != "master_metadata_console"]
 
     required = {"FIELD", "IES_ORDER", "IES_FUNC", "IES_TOOLTIP"}
-    for name in candidates:
+    for name in names:
         rows = tables.get(name) or []
         try:
             df = pd.DataFrame(rows)
@@ -967,7 +964,7 @@ def _load_metadata_schema_from_json_bytes(buf: bytes) -> List[Dict[str, Any]]:
         if not df.empty and required.issubset(set(df.columns)):
             return _schema_from_dataframe(df)
 
-    # As a last resort, try any table that has at least FIELD + IES_ORDER
+    # Relaxed fallback
     relaxed = {"FIELD", "IES_ORDER"}
     for name, rows in tables.items():
         try:
@@ -978,4 +975,3 @@ def _load_metadata_schema_from_json_bytes(buf: bytes) -> List[Dict[str, Any]]:
             return _schema_from_dataframe(df)
 
     raise SystemExit("[FATAL] No table with required columns found in JSON.")
-

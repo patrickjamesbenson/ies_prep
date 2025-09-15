@@ -56,7 +56,6 @@ from ies_prep import (
     file_generation_title,
     inject_file_generation_type,
     _load_metadata_schema_from_google, 
-    _load_metadata_schema_from_json_bytes,
 )
 
 # -----------------------------------------------------
@@ -515,7 +514,12 @@ def render_metadata_selector(
     # === Source selector + on-demand loader (Excel or Google) ===
     src = st.radio(
         "Metadata source",
-        ["Excel (.xlsx)
+        ["Excel (.xlsx)", "Google Sheets (service account)", "JSON (novon_workflow.json)"],
+        index=0,
+        horizontal=True,
+        key="md_source",
+    )
+
 # JSON uploader for metadata (new mode)
 md_json_bytes = None
 if src == "JSON (novon_workflow.json)":
@@ -524,7 +528,6 @@ if src == "JSON (novon_workflow.json)":
         try:
             md_json_bytes = _json_up.getvalue()
             st.session_state["md_json_bytes"] = md_json_bytes
-            # show a tiny preview of keys
             _tmp = json.loads(md_json_bytes.decode("utf-8", errors="replace"))
             st.caption(f"JSON loaded • tables: {len((_tmp.get('tables') or {}))}")
         except Exception as _e:
@@ -547,22 +550,42 @@ if src == "JSON (novon_workflow.json)" and not md_json_bytes:
                 break
         except Exception as _e:
             st.warning(f"Could not read {_p}: {_e}")
-", "Google Sheets (service account)", "JSON (novon_workflow.json)"],
-        index=0,
-        horizontal=True,
-        key="md_source",
-    )
+
 
     # Google Sheet config UI (only visible if selected)
     do_refresh = False
-    if src == "JSON (novon_workflow.json)":
-        _b = st.session_state.get("md_json_bytes", b"") or (md_json_bytes or b"")
-        _sha = hashlib.sha256(_b).hexdigest() if _b else "no-json"
-        path_key = ("json", _sha)
-    elif src == "JSON (novon_workflow.json)":
+    if src == "Google Sheets (service account)":
+        g_cols = st.columns(3)
+        SHEET_ID = g_cols[0].text_input("Google Sheet ID", value=st.session_state.get("g_sheet_id", ""), key="g_sheet_id")
+        WORKSHEET = g_cols[1].text_input("Worksheet title", value=st.session_state.get("g_sheet_ws", "master_metadata_console"), key="g_sheet_ws")
+        do_refresh = g_cols[2].button("Refresh now", key="md_refresh_now")
+
+        # show cache timestamp if exists
+        try:
+            import os, time
+            cache_path = os.path.join("assets", "linear_data_cache.json")
+            if os.path.exists(cache_path):
+                ts = os.path.getmtime(cache_path)
+                st.caption(f"Cache: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))} — assets/linear_data_cache.json")
+        except Exception:
+            pass
+
+    # Key to invalidate when source/settings change
+    if src == "Google Sheets (service account)":
+        path_key = (
+    "gsheet",
+    _normalize_sheet_id(st.session_state.get("g_sheet_id", "")),
+    st.session_state.get("g_sheet_ws", "master_metadata_console"),
+)
+    else:
+        path_key = ("excel", excel_path, sheet)
+
+    if ("md_schema" not in ss) or (ss.get("md_schema_path") != path_key) or (src == "Google Sheets (service account)" and do_refresh):
+        try:
+            if src == "JSON (novon_workflow.json)":
                 _b = st.session_state.get("md_json_bytes", b"") or (md_json_bytes or b"")
                 if not _b:
-                    raise SystemExit("Upload a NOVON Workflow JSON file first.")
+                    raise SystemExit("Upload a NOVON Workflow JSON file first or place it at assets/novon_workflow.json")
                 schema = _load_metadata_schema_from_json_bytes(_b)
             elif src == "Google Sheets (service account)":
                 schema = _load_metadata_schema_from_google(
@@ -572,7 +595,7 @@ if src == "JSON (novon_workflow.json)" and not md_json_bytes:
                 )
             else:
                 schema = _load_metadata_schema_from_excel(excel_path, sheet)
-ss["md_schema"] = schema
+            ss["md_schema"] = schema
             ss["md_schema_path"] = path_key
 
         except SystemExit as e:
